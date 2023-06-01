@@ -65,10 +65,12 @@ use crate::handshake::State;
 use crate::io::handshake;
 use crate::protocol::{noise_params_into_builder, AuthenticKeypair, Keypair, PARAMS_XX};
 use futures::prelude::*;
+use libp2p_core::multihash::Multihash;
 use libp2p_core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use libp2p_identity as identity;
 use libp2p_identity::PeerId;
 use snow::params::NoiseParams;
+use std::collections::HashSet;
 use std::pin::Pin;
 
 /// The configuration for the noise handshake.
@@ -76,6 +78,7 @@ use std::pin::Pin;
 pub struct Config {
     dh_keys: AuthenticKeypair,
     params: NoiseParams,
+    webtransport_certhashes: Option<HashSet<Multihash>>,
 
     /// Prologue to use in the noise handshake.
     ///
@@ -94,6 +97,7 @@ impl Config {
         Ok(Self {
             dh_keys: noise_keys,
             params: PARAMS_XX.clone(),
+            webtransport_certhashes: None,
             prologue: vec![],
         })
     }
@@ -101,7 +105,17 @@ impl Config {
     /// Set the noise prologue.
     pub fn with_prologue(mut self, prologue: Vec<u8>) -> Self {
         self.prologue = prologue;
+        self
+    }
 
+    /// Set WebTransport certhashes extension
+    ///
+    /// In case of initiator, these certhashes will be used to validate the ones reported by
+    /// responder.
+    ///
+    /// In case of responder, these certhashes will be reported to initiator.
+    pub fn with_webtransport_certhashes(mut self, certhashes: HashSet<Multihash>) -> Self {
+        self.webtransport_certhashes = Some(certhashes).filter(|h| !h.is_empty());
         self
     }
 
@@ -114,7 +128,13 @@ impl Config {
         )
         .build_responder()?;
 
-        let state = State::new(socket, session, self.dh_keys.identity, None);
+        let state = State::new(
+            socket,
+            session,
+            self.dh_keys.identity,
+            None,
+            self.webtransport_certhashes,
+        );
 
         Ok(state)
     }
@@ -128,7 +148,13 @@ impl Config {
         )
         .build_initiator()?;
 
-        let state = State::new(socket, session, self.dh_keys.identity, None);
+        let state = State::new(
+            socket,
+            session,
+            self.dh_keys.identity,
+            None,
+            self.webtransport_certhashes,
+        );
 
         Ok(state)
     }
@@ -213,8 +239,23 @@ pub enum Error {
     InvalidPayload(#[from] DecodeError),
     #[error(transparent)]
     SigningError(#[from] libp2p_identity::SigningError),
+    #[error("Unknown WebTransport certhashes: {}", certhashes_to_string(.0))]
+    UnknownWebTransportCerthashes(HashSet<Multihash>),
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
 pub struct DecodeError(quick_protobuf::Error);
+
+fn certhashes_to_string(certhashes: &HashSet<Multihash>) -> String {
+    let mut s = String::new();
+
+    for hash in certhashes {
+        if !s.is_empty() {
+            s.push_str(", ");
+        }
+        s.push_str(&bs58::encode(hash.to_bytes()).into_string());
+    }
+
+    s
+}
