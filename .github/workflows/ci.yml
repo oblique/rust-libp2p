@@ -42,8 +42,41 @@ jobs:
           shared-key: stable-cache
           save-if: false
 
+      - name: Find manifest directory
+        id: find-manifest
+        run: |
+          MANIFEST_PATH="$(cargo metadata --format-version=1 --no-deps | jq -r '.packages | map(select(.name == "'"$CRATE"'") | .manifest_path) | first')"
+          MANIFEST_DIR="$(dirname "$MANIFEST_PATH")"
+          echo "manifest_dir=${MANIFEST_DIR}"
+          echo "manifest_dir=${MANIFEST_DIR}" >> $GITHUB_OUTPUT
+
+      # If crate has wasm-bindgen-test as a dependency, then we assume
+      # that it has WASM tests
+      - name: Check if crate has any WASM tests
+        id: check-wasm
+        run: |
+          HAS_WASM_TEST=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages | map(select(.name == "'"$CRATE"'") | .dependencies[].name | contains("wasm-bindgen-test")) | any')
+          echo "has_wasm_test=${HAS_WASM_TEST}"
+          echo "has_wasm_test=${HAS_WASM_TEST}" >> $GITHUB_OUTPUT
+
+      - name: Install wasm-pack
+        if: steps.check-wasm.outputs.has_wasm_test == 'true'
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | bash
+
       - name: Run all tests
         run: cargo test --package "$CRATE" --all-features
+
+      - name: Run all tests (Chrome/WASM)
+        if: steps.check-wasm.outputs.has_wasm_test == 'true'
+        # `wasm-pack` does not support `--package`
+        working-directory: ${{ steps.find-manifest.outputs.manifest_dir }}
+        run: wasm-pack test --chrome --headless --all-features
+
+      - name: Run all tests (Firefox/WASM)
+        if: steps.check-wasm.outputs.has_wasm_test == 'true'
+        # `wasm-pack` does not support `--package`
+        working-directory: ${{ steps.find-manifest.outputs.manifest_dir }}
+        run: wasm-pack test --firefox --headless --all-features
 
       - name: Check if we compile without any features activated
         run: cargo build --package "$CRATE" --no-default-features
@@ -76,7 +109,7 @@ jobs:
         run: |
           PACKAGE_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -e -r '.packages[] | select(.name == "'"$CRATE"'") | .version')
           SPECIFIED_VERSION=$(tomlq "workspace.dependencies.$CRATE.version" --file ./Cargo.toml)
-          
+
           echo "Package version: $PACKAGE_VERSION";
           echo "Specified version: $SPECIFIED_VERSION";
 
@@ -283,6 +316,8 @@ jobs:
       members: ${{ steps.cargo-metadata.outputs.members }}
     steps:
       - uses: actions/checkout@v3
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - id: cargo-metadata
         run: |

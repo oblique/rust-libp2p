@@ -46,6 +46,7 @@ full = [
     "wasm-ext-websocket",
     "webrtc",
     "websocket",
+    "webtransport-websys",
     "yamux",
 ]
 
@@ -83,6 +84,7 @@ wasm-ext = ["dep:libp2p-wasm-ext"]
 wasm-ext-websocket = ["wasm-ext", "libp2p-wasm-ext?/websocket"]
 webrtc = ["dep:libp2p-webrtc", "libp2p-webrtc?/pem"]
 websocket = ["dep:libp2p-websocket"]
+webtransport-websys = ["dep:libp2p-webtransport-websys"]
 yamux = ["dep:libp2p-yamux"]
 
 [dependencies]
@@ -112,6 +114,7 @@ libp2p-rendezvous = { workspace = true, optional = true }
 libp2p-request-response = { workspace = true, optional = true }
 libp2p-swarm = { workspace = true }
 libp2p-wasm-ext = { workspace = true, optional = true }
+libp2p-webtransport-websys = { workspace = true, optional = true }
 libp2p-yamux = { workspace = true, optional = true }
 
 multiaddr = { version = "0.17.0" }
