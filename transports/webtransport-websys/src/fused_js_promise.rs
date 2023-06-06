@@ -6,6 +6,7 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 
 /// Convenient wrapper to poll a promise to completion.
+#[derive(Debug)]
 pub(crate) struct FusedJsPromise {
     promise: Option<SendWrapper<JsFuture>>,
 }

@@ -32,15 +32,23 @@ pub(crate) fn detach_promise(promise: Promise) {
 }
 
 /// Typecasts a JavaScript type.
+///
+/// Returns a `Ok(value)` casted to the requested type.
+///
+/// If the underlying value is an error and the requested
+/// type is not, then `Err(Error::JsError)` is returned.
+///
+/// If the underlying value can not be casted to the requested type and
+/// is not an error, then `Err(Error::JsCastFailed)` is returned.
 pub(crate) fn to_js_type<T>(value: impl Into<JsValue>) -> Result<T, Error>
 where
     T: JsCast + From<JsValue>,
 {
     let value = value.into();
 
-    if value.is_instance_of::<T>() {
-        Ok(T::from(value))
-    } else if value.is_instance_of::<js_sys::Error>() {
+    if value.has_type::<T>() {
+        Ok(value.unchecked_into())
+    } else if value.has_type::<js_sys::Error>() {
         Err(Error::from_js_value(value))
     } else {
         Err(Error::JsCastFailed)
@@ -68,10 +76,13 @@ pub(crate) fn to_io_error(value: JsValue) -> io::Error {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use js_sys::{Promise, TypeError, Uint8Array};
+    use libp2p_core::Multiaddr;
+    use wasm_bindgen_futures::JsFuture;
     use wasm_bindgen_test::wasm_bindgen_test;
+    use web_sys::{window, Response, Window};
 
     #[wasm_bindgen_test]
     fn check_js_typecasting() {
@@ -96,5 +107,30 @@ mod tests {
         // Explicitly request js_sys::Error typecasting.
         let value = JsValue::from(TypeError::new("abc"));
         assert!(to_js_type::<js_sys::Error>(value).is_ok());
+    }
+
+    /// Helper that returns the multiaddress of echo-server
+    ///
+    /// It fetches the multiaddress via HTTP request to
+    /// 127.0.0.1:4455.
+    ///
+    /// This is needed for test cases in other modules
+    pub(crate) async fn fetch_server_addr() -> Multiaddr {
+        let url = "http://127.0.0.1:4455/";
+        let window = window().expect("failed to get browser window");
+
+        let value = JsFuture::from(window.fetch_with_str(url))
+            .await
+            .expect("fetch failed");
+        let resp = to_js_type::<Response>(value).expect("cast failed");
+
+        let text = resp.text().expect("text failed");
+        let text = JsFuture::from(text).await.expect("text promise failed");
+
+        text.as_string()
+            .filter(|s| !s.is_empty())
+            .expect("response not a text")
+            .parse()
+            .unwrap()
     }
 }

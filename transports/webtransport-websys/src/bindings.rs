@@ -3,6 +3,7 @@
 //!
 //! Only the methods that are by this crate are extracted.
 
+#![allow(clippy::all)]
 use js_sys::{Object, Promise, Reflect};
 use wasm_bindgen::prelude::*;
 use web_sys::{ReadableStream, WritableStream};
