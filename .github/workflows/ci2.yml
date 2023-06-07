@@ -1,0 +1,39 @@
+name: Continuous integration
+
+on:
+  push:
+    branches:
+      - webtransport-wasm-ext-test2
+
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 2 # Fail cache download after 2 minutes.
+
+jobs:
+  webtransport_tests:
+    name: Test WebTransport
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: docker/setup-buildx-action@v2
+
+        #- uses: nanasess/setup-chromedriver@v2
+        #with:
+        # chromedriver-version: '114.0.5735.90'
+
+      - uses: taiki-e/cache-cargo-install-action@v1
+        with:
+          tool: wasm-pack@0.11.1
+
+      - name: Build echo-server
+        working-directory: transports/webtransport-websys/echo-server
+        run: |
+            pwd
+            ls -la
+            docker buildx build -o type=local,dest=. -t echo-server .
+
+      - name: Run wasm-pack test (Chrome)
+        working-directory: transports/webtransport-websys
+        run: |
+          ./echo-server/echo-server &
+          wasm-pack test --chrome --headless

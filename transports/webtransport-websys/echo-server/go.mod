@@ -1,4 +1,4 @@
-module github.com/libp2p/rust-libp2p/transports/webtransport-websys/echo-server
+module echo-server
 
 go 1.20
 
