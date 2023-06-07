@@ -12,6 +12,9 @@ jobs:
   webtransport_tests:
     name: Test WebTransport
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: transports/webtransport-websys
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
@@ -21,19 +24,18 @@ jobs:
         #with:
         # chromedriver-version: '114.0.5735.90'
 
-        #- uses: taiki-e/cache-cargo-install-action@v1
-        #with:
-        #  tool: wasm-pack@0.11.1
+      - uses: taiki-e/cache-cargo-install-action@v1
+        with:
+          tool: wasm-pack@0.11.1
 
       - name: Build echo-server
-        working-directory: transports/webtransport-websys/echo-server
         run: |
             pwd
             ls -la
-            docker buildx build -o type=local,dest=. -t echo-server .
+            docker buildx build -o type=local,dest=echo-server -t echo-server echo-server
 
       - name: Run wasm-pack test (Chrome)
-        working-directory: transports/webtransport-websys
         run: |
           ./echo-server/echo-server &
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | bash
           wasm-pack test --chrome --headless
