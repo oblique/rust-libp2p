@@ -24,9 +24,9 @@ jobs:
         #with:
         # chromedriver-version: '114.0.5735.90'
 
-      - uses: taiki-e/cache-cargo-install-action@v1
-        with:
-          tool: wasm-pack@0.11.1
+        #- uses: taiki-e/cache-cargo-install-action@v1
+        #with:
+        #  tool: wasm-pack@0.11.1
 
       - name: Build echo-server
         run: |
