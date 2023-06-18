@@ -15,6 +15,13 @@ use crate::Error;
 /// A stream on a connection.
 #[derive(Debug)]
 pub struct Stream {
+    // Swarm needs all types to be Send.  WASM is single-threaded
+    // and it is safe to use SendWrapper.
+    inner: SendWrapper<StreamInner>,
+}
+
+#[derive(Debug)]
+struct StreamInner {
     reader: ReadableStreamDefaultReader,
     reader_read_promise: FusedJsPromise,
     read_leftovers: Option<Uint8Array>,
@@ -22,15 +29,6 @@ pub struct Stream {
     writer_state: StreamState,
     writer_ready_promise: FusedJsPromise,
     writer_closed_promise: FusedJsPromise,
-}
-
-/// Stream wrapped in [`SendWrapper`].
-///
-/// This is needed by Swarm. WASM is single-threaded and it is safe
-/// to use [`SendWrapper`].
-#[derive(Debug)]
-pub(crate) struct StreamSend {
-    inner: SendWrapper<Stream>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,16 +47,20 @@ impl Stream {
         let writer = send_stream.get_writer().map_err(Error::from_js_value)?;
 
         Ok(Stream {
-            reader,
-            reader_read_promise: FusedJsPromise::new(),
-            read_leftovers: None,
-            writer,
-            writer_state: StreamState::Open,
-            writer_ready_promise: FusedJsPromise::new(),
-            writer_closed_promise: FusedJsPromise::new(),
+            inner: SendWrapper::new(StreamInner {
+                reader,
+                reader_read_promise: FusedJsPromise::new(),
+                read_leftovers: None,
+                writer,
+                writer_state: StreamState::Open,
+                writer_ready_promise: FusedJsPromise::new(),
+                writer_closed_promise: FusedJsPromise::new(),
+            }),
         })
     }
+}
 
+impl StreamInner {
     fn poll_writer_ready(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
         if self.writer_state != StreamState::Open {
             return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
@@ -125,36 +127,14 @@ impl Stream {
 
         Poll::Ready(Ok(val))
     }
-}
 
-impl Drop for Stream {
-    fn drop(&mut self) {
-        // Close writer.
-        //
-        // We choose to use `close()` instead of `abort()`, because
-        // abort was causing some side effects on the WebTransport
-        // layer and connection was lost.
-        detach_promise(self.writer.close());
-
-        // Cancel any ongoing reads.
-        detach_promise(self.reader.cancel());
-    }
-}
-
-impl AsyncRead for Stream {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        let this = self.get_mut();
-
+    fn poll_read(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         // If we have leftovers from a previous read, then use them.
         // Otherwise read new data.
-        let data = match this.read_leftovers.take() {
+        let data = match self.read_leftovers.take() {
             Some(data) => data,
             None => {
-                match ready!(this.poll_reader_read(cx))? {
+                match ready!(self.poll_reader_read(cx))? {
                     Some(data) => data,
                     // EOF
                     None => return Poll::Ready(Ok(0)),
@@ -172,35 +152,29 @@ impl AsyncRead for Stream {
         let leftovers = data.slice(out_len, data.byte_length());
 
         if leftovers.byte_length() > 0 {
-            this.read_leftovers = Some(leftovers);
+            self.read_leftovers = Some(leftovers);
         }
 
         Poll::Ready(Ok(out_len as usize))
     }
-}
 
-impl AsyncWrite for Stream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        let this = self.get_mut();
-
-        ready!(this.poll_writer_ready(cx))?;
+    fn poll_write(&mut self, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
+        ready!(self.poll_writer_ready(cx))?;
 
         let len = buf.len() as u32;
         let data = Uint8Array::new_with_length(len);
         data.copy_from(buf);
 
-        detach_promise(this.writer.write_with_chunk(&data));
+        detach_promise(self.writer.write_with_chunk(&data));
 
         Poll::Ready(Ok(len as usize))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        let this = self.get_mut();
-
-        if this.writer_state == StreamState::Open {
-            // Writer has queue size of 1, so as soon it is ready, this means the
+    fn poll_flush(&mut self, cx: &mut Context) -> Poll<io::Result<()>> {
+        if self.writer_state == StreamState::Open {
+            // Writer has queue size of 1, so as soon it is ready, self means the
             // messages were flushed.
-            this.poll_writer_ready(cx)
+            self.poll_writer_ready(cx)
         } else {
             debug_assert!(
                 false,
@@ -209,40 +183,46 @@ impl AsyncWrite for Stream {
             Poll::Ready(Ok(()))
         }
     }
+}
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        self.get_mut().poll_writer_close(cx)
+impl Drop for StreamInner {
+    fn drop(&mut self) {
+        // Close writer.
+        //
+        // We choose to use `close()` instead of `abort()`, because
+        // abort was causing some side effects on the WebTransport
+        // layer and connection was lost.
+        detach_promise(self.writer.close());
+
+        // Cancel any ongoing reads.
+        detach_promise(self.reader.cancel());
     }
 }
 
-impl StreamSend {
-    pub(crate) fn new(stream: Stream) -> Self {
-        StreamSend {
-            inner: SendWrapper::new(stream),
-        }
-    }
-}
-
-impl AsyncRead for StreamSend {
+impl AsyncRead for Stream {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut *self.get_mut().inner).poll_read(cx, buf)
+        self.inner.poll_read(cx, buf)
     }
 }
 
-impl AsyncWrite for StreamSend {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        Pin::new(&mut *self.get_mut().inner).poll_write(cx, buf)
+impl AsyncWrite for Stream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.inner.poll_write(cx, buf)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        Pin::new(&mut *self.get_mut().inner).poll_flush(cx)
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        self.inner.poll_flush(cx)
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        Pin::new(&mut *self.get_mut().inner).poll_close(cx)
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        self.inner.poll_writer_close(cx)
     }
 }
