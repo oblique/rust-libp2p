@@ -431,9 +431,18 @@ where
         };
 
         if let Some(request) = self.try_send_request(peer, request) {
-            self.pending_events.push_back(ToSwarm::Dial {
-                opts: DialOpts::peer_id(*peer).build(),
-            });
+            // `pending_outbound_requests` items only when dailing is in progress,
+            // so we avoid re-dialing in that case.
+            if self
+                .pending_outbound_requests
+                .get(peer)
+                .map_or(true, |reqs| reqs.is_empty())
+            {
+                self.pending_events.push_back(ToSwarm::Dial {
+                    opts: DialOpts::peer_id(*peer).build(),
+                });
+            }
+
             self.pending_outbound_requests
                 .entry(*peer)
                 .or_default()

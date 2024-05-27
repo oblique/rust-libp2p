@@ -1,3 +1,7 @@
+## 0.26.3
+
+- Avoid dialing if it is already in progress.
+
 ## 0.26.2
 
 - Deprecate `Behaviour::add_address` in favor of `Swarm::add_peer_address`.
