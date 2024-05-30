@@ -2,6 +2,8 @@
 
 - Report dial IO errors to the user.
   See [PR 5429](https://github.com/libp2p/rust-libp2p/pull/5429).
+- Report failure when streams are at capacity.
+  See [PR 5417](https://github.com/libp2p/rust-libp2p/pull/5417).
 
 ## 0.26.2
 
